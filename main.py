@@ -1,6 +1,7 @@
 import os
+import asyncio
 from typing import List
-from fastapi import FastAPI, BackgroundTasks, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi_mail import FastMail, MessageSchema, ConnectionConfig, MessageType
 from pydantic import EmailStr
 
@@ -18,6 +19,15 @@ conf = ConnectionConfig(
     VALIDATE_CERTS=True
 )
 
+@app.on_event("startup")
+async def startup_event():
+    print("--- STARTING EMAIL CONNECTION TEST ---")
+    fm = FastMail(conf)
+    try:
+        print(f"Attempting to connect to {conf.MAIL_SERVER}:{conf.MAIL_PORT}...")
+    except Exception as e:
+        print(f"!!! CONFIGURATION ERROR !!!: {e}")
+
 @app.post("/send-inquiry")
 async def send_inquiry(
     name: str = Form(...),
@@ -27,6 +37,8 @@ async def send_inquiry(
     message: str = Form(...),
     files: List[UploadFile] = File(...)
 ):
+    print(f"Received request from {email}")
+    
     message_body = f"""
     New Inquiry Received:
     Name: {name}
@@ -48,8 +60,8 @@ async def send_inquiry(
 
     try:
         await fm.send_message(message_object)
+        print("Email sent successfully!")
         return {"status": "Email sent successfully"}
-        
     except Exception as e:
-        print(f"EMAIL ERROR: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to send email: {str(e)}")
+        print(f"!!! SENDING FAILED !!!: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
