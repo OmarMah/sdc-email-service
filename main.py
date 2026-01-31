@@ -20,7 +20,6 @@ conf = ConnectionConfig(
 
 @app.post("/send-inquiry")
 async def send_inquiry(
-    background_tasks: BackgroundTasks,
     name: str = Form(...),
     phone: str = Form(...),
     email: EmailStr = Form(...),
@@ -37,7 +36,7 @@ async def send_inquiry(
     Message: {message}
     """
 
-    message = MessageSchema(
+    message_object = MessageSchema(
         subject=f"New Inquiry from {name} - {inquiry_type}",
         recipients=[os.environ.get("MAIL_RECIPIENT")],
         body=message_body,
@@ -46,6 +45,7 @@ async def send_inquiry(
     )
 
     fm = FastMail(conf)
-    background_tasks.add_task(fm.send_message, message)
+    
+    await fm.send_message(message_object)
 
-    return {"status": "Email queued successfully"}
+    return {"status": "Email sent successfully"}
