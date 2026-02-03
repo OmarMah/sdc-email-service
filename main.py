@@ -3,9 +3,19 @@ import asyncio
 from typing import List
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi_mail import FastMail, MessageSchema, ConnectionConfig, MessageType
+
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import EmailStr
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 conf = ConnectionConfig(
     MAIL_USERNAME=os.environ.get("MAIL_USERNAME"),
@@ -22,9 +32,8 @@ conf = ConnectionConfig(
 @app.on_event("startup")
 async def startup_event():
     print("--- STARTING EMAIL CONNECTION TEST ---")
-    fm = FastMail(conf)
     try:
-        print(f"Attempting to connect to {conf.MAIL_SERVER}:{conf.MAIL_PORT}...")
+        print(f"Configured for: {conf.MAIL_SERVER}:{conf.MAIL_PORT}")
     except Exception as e:
         print(f"!!! CONFIGURATION ERROR !!!: {e}")
 
