@@ -70,13 +70,30 @@ async def verify_recaptcha_token(
             )
             response.raise_for_status()
             data = response.json()
-    except Exception:
-        return {"ok": False, "reason": "verification_request_failed"}
+    except httpx.TimeoutException:
+        return {"ok": False, "reason": "google_timeout"}
+    except httpx.HTTPStatusError as exc:
+        return {
+            "ok": False,
+            "reason": "google_http_error",
+            "http_status": exc.response.status_code,
+        }
+    except httpx.RequestError as exc:
+        return {
+            "ok": False,
+            "reason": "google_request_error",
+            "error_type": exc.__class__.__name__,
+        }
+    except ValueError:
+        return {"ok": False, "reason": "google_invalid_json"}
 
     action = data.get("action")
     hostname = (data.get("hostname") or "").lower()
     score = float(data.get("score") or 0.0)
     success = bool(data.get("success"))
+    error_codes = data.get("error-codes") or []
+    if not isinstance(error_codes, list):
+        error_codes = [str(error_codes)]
 
     if not success:
         return {
@@ -85,6 +102,7 @@ async def verify_recaptcha_token(
             "score": score,
             "action": action,
             "hostname": hostname,
+            "error_codes": error_codes,
         }
     if action != expected_action:
         return {
@@ -93,6 +111,7 @@ async def verify_recaptcha_token(
             "score": score,
             "action": action,
             "hostname": hostname,
+            "error_codes": error_codes,
         }
     if score < RECAPTCHA_MIN_SCORE:
         return {
@@ -101,6 +120,7 @@ async def verify_recaptcha_token(
             "score": score,
             "action": action,
             "hostname": hostname,
+            "error_codes": error_codes,
         }
     return {
         "ok": True,
@@ -132,38 +152,55 @@ async def send_inquiry(
     files: Optional[List[UploadFile]] = File(None)
 ):
     print(f"Received request from {email}")
+    remote_ip = request.client.host if request.client else "unknown"
+    request_context = (
+        f"email={email} ip={remote_ip} inquiry_type={inquiry_type} "
+        f"client_action={recaptcha_action or 'missing'} token_len={len(recaptcha_token or '')}"
+    )
 
     if not recaptcha_token or not recaptcha_action:
+        logger.warning(
+            "captcha rejected: reason=missing_captcha_fields has_token=%s has_action=%s %s",
+            bool(recaptcha_token),
+            bool(recaptcha_action),
+            request_context,
+        )
         raise HTTPException(status_code=400, detail="Missing required captcha fields.")
     if recaptcha_action != RECAPTCHA_EXPECTED_ACTION:
-        logger.info(
-            "captcha rejected",
-            extra={
-                "event": "captcha_rejected",
-                "reason": "action_not_expected",
-                "action": recaptcha_action,
-            },
+        logger.warning(
+            "captcha rejected: reason=unexpected_client_action expected_action=%s %s",
+            RECAPTCHA_EXPECTED_ACTION,
+            request_context,
         )
         raise HTTPException(status_code=403, detail="Request rejected.")
 
-    remote_ip = request.client.host if request.client else None
     verification = await verify_recaptcha_token(
         token=recaptcha_token,
         expected_action=RECAPTCHA_EXPECTED_ACTION,
-        remote_ip=remote_ip,
+        remote_ip=None if remote_ip == "unknown" else remote_ip,
     )
-    log_payload = {
-        "event": "captcha_result",
-        "ok": verification.get("ok"),
-        "reason": verification.get("reason"),
-        "score": verification.get("score"),
-        "action": verification.get("action"),
-        "hostname": verification.get("hostname"),
-    }
     if verification.get("ok"):
-        logger.info("captcha verified", extra=log_payload)
+        logger.info(
+            "captcha verified: reason=%s score=%s google_action=%s hostname=%s %s",
+            verification.get("reason"),
+            verification.get("score"),
+            verification.get("action"),
+            verification.get("hostname"),
+            request_context,
+        )
     else:
-        logger.warning("captcha rejected", extra=log_payload)
+        logger.warning(
+            "captcha rejected: reason=%s score=%s google_action=%s hostname=%s "
+            "error_codes=%s http_status=%s error_type=%s %s",
+            verification.get("reason"),
+            verification.get("score"),
+            verification.get("action"),
+            verification.get("hostname"),
+            verification.get("error_codes"),
+            verification.get("http_status"),
+            verification.get("error_type"),
+            request_context,
+        )
         raise HTTPException(status_code=403, detail="Request could not be verified.")
 
     safe_name = html.escape(name)

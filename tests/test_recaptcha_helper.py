@@ -41,4 +41,4 @@ def test_verify_recaptcha_handles_network_error(monkeypatch):
         )
     )
     assert result["ok"] is False
-    assert result["reason"] == "verification_request_failed"
+    assert result["reason"] == "google_timeout"
